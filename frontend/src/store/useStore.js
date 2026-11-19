@@ -29,7 +29,7 @@ export const useStore = create(
       modelResults: {},
       modelParams: {
         splitFraction: 0.2,
-        forecastHorizon: 2,
+        forecastHorizon: 5,
         epochs: 4,
         rfEstimators: 100,
         rfMaxDepth: 0, // 0 means None
@@ -60,7 +60,7 @@ export const useStore = create(
         modelResults: {},
         modelParams: {
           splitFraction: 0.2,
-          forecastHorizon: 2,
+          forecastHorizon: 5,
           epochs: 4,
           rfEstimators: 100,
           rfMaxDepth: 0,

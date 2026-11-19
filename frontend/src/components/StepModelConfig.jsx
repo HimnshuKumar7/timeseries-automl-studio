@@ -65,8 +65,8 @@ export default function StepModelConfig() {
               type="number" 
               min="1" 
               max="60" 
-              value={modelParams.forecastHorizon || 2} 
-              onChange={e => setModelParams({ forecastHorizon: Math.max(1, parseInt(e.target.value) || 2) })} 
+              value={modelParams.forecastHorizon || 5} 
+              onChange={e => setModelParams({ forecastHorizon: Math.max(1, parseInt(e.target.value) || 5) })} 
               className="w-24 text-sm font-bold text-center p-2 border rounded-md dark:bg-gray-800 dark:border-gray-700 dark:text-white"
             />
             <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Steps Ahead</span>

@@ -151,12 +151,16 @@ def run_training():
     metrics = {}
     forecast = []
     
-    forecast_steps = int(model_params.get('forecastHorizon', 2)) if 'model_params' in locals() and isinstance(model_params, dict) else 2
+    forecast_steps = int(model_params.get('forecastHorizon', 5)) if 'model_params' in locals() and isinstance(model_params, dict) else 5
     
     if model_type == 'arima':
         from statsmodels.tsa.arima.model import ARIMA
-        # Standard Univariate ARIMA (1,1,1)
-        model = ARIMA(y, order=(1, 1, 1))
+        # Univariate ARIMA model order (p, d, q) = (10, 1, 5)
+        # p=10 (autoregressive order), d=1 (differencing degree), q=5 (moving-average order)
+        p = int(model_params.get('arima_p', 10)) if 'model_params' in locals() and isinstance(model_params, dict) else 10
+        d = int(model_params.get('arima_d', 1)) if 'model_params' in locals() and isinstance(model_params, dict) else 1
+        q = int(model_params.get('arima_q', 5)) if 'model_params' in locals() and isinstance(model_params, dict) else 5
+        model = ARIMA(y, order=(p, d, q))
         fitted = model.fit(method_kwargs={'method': 'nm', 'maxiter': 50})
         preds = fitted.fittedvalues
         forecast = fitted.forecast(steps=forecast_steps).tolist()
@@ -210,9 +214,9 @@ def run_training():
     elif model_type in ['linear', 'randomForest', 'boosting']:
         from sklearn.metrics import mean_absolute_error, mean_squared_error
         
-        df['lag1'] = df[target_col].shift(1)
-        df['lag2'] = df[target_col].shift(2)
-        df['lag3'] = df[target_col].shift(3)
+        num_lags = 5
+        for i in range(1, num_lags + 1):
+            df[f'lag{i}'] = df[target_col].shift(i)
         df = df.dropna()
         
         if len(df) == 0:
@@ -259,7 +263,8 @@ def run_training():
         # last observed value for every future step, forecast them forward
         # so the recursive AR loop below feeds the trained model realistic
         # future inputs rather than stale ones.
-        exog_cols = [c for c in X.columns if c not in ('lag1', 'lag2', 'lag3')]
+        lag_cols = {f'lag{i}' for i in range(1, num_lags + 1)}
+        exog_cols = [c for c in X.columns if c not in lag_cols]
         exog_forecast_df = None
         if len(exog_cols) > 0 and len(df) > 10:
             try:
@@ -279,8 +284,7 @@ def run_training():
         # Forecast steps iteratively using auto-regressive lags
         last_row = df.iloc[-1].copy()
         current_y = last_row[target_col]
-        current_lag1 = last_row['lag1']
-        current_lag2 = last_row['lag2']
+        current_lags = [last_row[f'lag{i}'] for i in range(1, num_lags)]
         
         forecast = []
         for step in range(forecast_steps):
@@ -289,15 +293,14 @@ def run_training():
                 for col in exog_cols:
                     next_x[col] = exog_forecast_df.iloc[step][col]
             next_x['lag1'] = current_y
-            next_x['lag2'] = current_lag1
-            next_x['lag3'] = current_lag2
+            for i in range(1, num_lags):
+                next_x[f'lag{i+1}'] = current_lags[i - 1]
             next_x_df = pd.DataFrame([next_x])[X.columns]
             
             pred = model.predict(next_x_df)[0]
             forecast.append(float(pred))
             
-            current_lag2 = current_lag1
-            current_lag1 = current_y
+            current_lags = [current_y] + current_lags[:-1]
             current_y = pred
     
     return json.dumps({

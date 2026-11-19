@@ -19,14 +19,14 @@ It was built as a research-oriented internship project to explore practical time
 
 | Family | Models |
 | --- | --- |
-| Classical statistical | ARIMA(1,1,1), VARMAX / VARMA-style multivariate forecasting |
+| Classical statistical | ARIMA(10,1,5), VARMAX / VARMA-style multivariate forecasting |
 | Machine learning | Linear Regression, HistGradientBoostingRegressor, Random Forest Regressor |
 | Deep learning | LSTM, GRU, LSTM-GRU Hybrid, Bidirectional LSTM, Transformer |
 
 ### Forecasting design
 
 - Classical models use the target series, or a small multivariate numeric set for VARMAX.
-- ML models use three autoregressive target lags plus available numeric columns. Future numeric inputs are forecast with VARMAX when possible.
+- ML models use five autoregressive target lags plus available numeric columns. Future numeric inputs are forecast with VARMAX when possible.
 - Deep models use a 10-step sliding window. By default they are univariate; optional numeric inputs selected in EDA are appended as feature channels.
 - Deep forecasts recursively feed each predicted target back into the next input window. Future selected feature values are generated with an in-worker VAR(1) forecast, with a last-observation fallback if fitting fails.
 
