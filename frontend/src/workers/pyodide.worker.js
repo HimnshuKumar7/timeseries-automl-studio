@@ -185,8 +185,20 @@ def run_training():
         p = int(arima_p) if 'arima_p' in globals() else 10
         d = int(arima_d) if 'arima_d' in globals() else 1
         q = int(arima_q) if 'arima_q' in globals() else 5
-        model = ARIMA(y, order=(p, d, q))
-        fitted = model.fit(method_kwargs={'method': 'nm', 'maxiter': 50})
+        
+        # Fit with fast, gradient-based L-BFGS optimizer and trend/drift estimation so
+        # the model converges properly and projects series trajectory instead of a flat constant line
+        try:
+            model = ARIMA(y, order=(p, d, q), trend='t' if d > 0 else 'c')
+            fitted = model.fit()
+        except Exception:
+            try:
+                model = ARIMA(y, order=(p, d, q), trend='c')
+                fitted = model.fit()
+            except Exception:
+                model = ARIMA(y, order=(p, d, q))
+                fitted = model.fit()
+                
         preds = fitted.fittedvalues
         forecast = fitted.forecast(steps=forecast_steps).tolist()
         mse = np.mean((y - preds)**2)
@@ -206,7 +218,7 @@ def run_training():
             try:
                 # Multivariate VARMA(1, 1) model
                 model = VARMAX(endog, order=(1, 1), trend='c')
-                fitted = model.fit(disp=False, maxiter=40)
+                fitted = model.fit(disp=False, maxiter=50)
                 preds_df = fitted.fittedvalues
                 preds = preds_df[target_col].values if target_col in preds_df.columns else preds_df.iloc[:, 0].values
                 
@@ -221,17 +233,17 @@ def run_training():
                 mse = np.mean((y - preds)**2)
                 metrics = {"rmse": float(np.sqrt(mse)), "mae": float(np.mean(np.abs(y - preds)))}
             except Exception:
-                # Fallback to ARMA(1, 0, 1) if solver encounters matrix singularity
-                model = ARIMA(y, order=(1, 0, 1))
-                fitted = model.fit(method_kwargs={'method': 'nm', 'maxiter': 30})
+                # Fallback to ARMA with drift trend
+                model = ARIMA(y, order=(1, 0, 1), trend='c')
+                fitted = model.fit()
                 preds = fitted.fittedvalues
                 forecast = fitted.forecast(steps=forecast_steps).tolist()
                 mse = np.mean((y - preds)**2)
                 metrics = {"rmse": float(np.sqrt(mse)), "mae": float(np.mean(np.abs(y - preds)))}
         else:
             # Single-variable dataset: Univariate VARMA(1,1) is ARMA(1, 0, 1)
-            model = ARIMA(y, order=(1, 0, 1))
-            fitted = model.fit(method_kwargs={'method': 'nm', 'maxiter': 40})
+            model = ARIMA(y, order=(1, 0, 1), trend='c')
+            fitted = model.fit()
             preds = fitted.fittedvalues
             forecast = fitted.forecast(steps=forecast_steps).tolist()
             mse = np.mean((y - preds)**2)
@@ -302,15 +314,28 @@ def run_training():
                     np.asarray(raw_exog_fc), columns=exog_cols
                 ).reset_index(drop=True)
             except Exception:
-                # If VARMA fails (e.g. too little data, singular matrix),
-                # fall back to the previous behavior (last observed values).
                 exog_forecast_df = None
+
+        if exog_forecast_df is None and len(exog_cols) > 0:
+            # Fallback: project each exogenous column using its recent momentum/drift
+            # instead of freezing them at a static value
+            fc_dict = {}
+            for col in exog_cols:
+                series = df[col].values
+                k_steps = min(5, len(series) - 1)
+                velocity = (series[-1] - series[-1 - k_steps]) / k_steps if k_steps > 0 else 0.0
+                fc_dict[col] = [float(series[-1] + (s + 1) * velocity) for s in range(forecast_steps)]
+            exog_forecast_df = pd.DataFrame(fc_dict)
 
         # Forecast steps iteratively using auto-regressive lags
         last_row = df.iloc[-1].copy()
         current_y = last_row[target_col]
         current_lags = [last_row[f'lag{i}'] for i in range(1, num_lags)]
         
+        # Measure recent trend momentum of target to prevent recursive prediction from stalling
+        k_target = min(5, len(df) - 1)
+        target_drift = (df[target_col].iloc[-1] - df[target_col].iloc[-1 - k_target]) / k_target if k_target > 0 else 0.0
+
         forecast = []
         for step in range(forecast_steps):
             next_x = last_row.copy()
@@ -322,8 +347,16 @@ def run_training():
                 next_x[f'lag{i+1}'] = current_lags[i - 1]
             next_x_df = pd.DataFrame([next_x])[X.columns]
             
-            pred = model.predict(next_x_df)[0]
-            forecast.append(float(pred))
+            pred = float(model.predict(next_x_df)[0])
+            
+            # If the recursive prediction flatlines (e.g. tree regressor trapped in an edge leaf),
+            # advance with the series' underlying momentum so future steps don't stall at a constant
+            if len(forecast) > 0 and abs(pred - forecast[-1]) < 1e-6 and abs(target_drift) > 1e-6:
+                pred = forecast[-1] + target_drift
+            elif len(forecast) == 0 and abs(pred - current_y) < 1e-6 and abs(target_drift) > 1e-6:
+                pred = current_y + target_drift
+
+            forecast.append(pred)
             
             current_lags = [current_y] + current_lags[:-1]
             current_y = pred

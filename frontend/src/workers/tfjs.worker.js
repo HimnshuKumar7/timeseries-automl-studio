@@ -221,19 +221,50 @@ async function evaluateAndForecast(model, X_test, y_test, scaledMatrix, mins, ra
   if (numExog > 0) {
     const exogHistoryScaled = scaledMatrix.map(row => row.slice(1)); // drop target channel
     exogForecast = fitAndForecastExogenousVAR1(exogHistoryScaled, forecastSteps);
-    // null => not enough history / singular fit; falls back to freezing below.
+    // If VAR(1) fit failed or singular, project recent linear drift rather than freezing
+    if (!exogForecast) {
+      const n = scaledMatrix.length;
+      const k = Math.min(5, n - 1);
+      exogForecast = [];
+      for (let s = 0; s < forecastSteps; s++) {
+        const row = [];
+        for (let c = 1; c < C; c++) {
+          const lastVal = scaledMatrix[n - 1][c];
+          const prevVal = scaledMatrix[n - 1 - k][c];
+          const drift = k > 0 ? (lastVal - prevVal) / k : 0;
+          row.push(lastVal + (s + 1) * drift);
+        }
+        exogForecast.push(row);
+      }
+    }
   }
 
   // 3. Iterative forecast for forecastSteps
   const forecast = [];
   const currentWindow = scaledMatrix.slice(-timesteps).map(row => row.slice());
   const lastExogRow = scaledMatrix[scaledMatrix.length - 1].slice(1);
+  const nRows = scaledMatrix.length;
+  const kTarget = Math.min(5, nRows - 1);
+  const targetDriftScaled = kTarget > 0 ? (scaledMatrix[nRows - 1][0] - scaledMatrix[nRows - 1 - kTarget][0]) / kTarget : 0;
 
   for (let i = 0; i < forecastSteps; i++) {
     const xs = tf.tensor3d([currentWindow]);
     const pred = model.predict(xs);
     const predArray = await pred.array();
-    const scaledPred = predArray[0][0];
+    let scaledPred = predArray[0][0];
+
+    // If recursive prediction flatlines at an underfitted constant, advance with series momentum
+    if (forecast.length > 0) {
+      const lastScaled = (forecast[forecast.length - 1] - mins[0]) / ranges[0];
+      if (Math.abs(scaledPred - lastScaled) < 1e-5 && Math.abs(targetDriftScaled) > 1e-5) {
+        scaledPred = lastScaled + targetDriftScaled;
+      }
+    } else {
+      const currentScaled = scaledMatrix[nRows - 1][0];
+      if (Math.abs(scaledPred - currentScaled) < 1e-5 && Math.abs(targetDriftScaled) > 1e-5) {
+        scaledPred = currentScaled + targetDriftScaled;
+      }
+    }
 
     forecast.push((scaledPred * ranges[0]) + mins[0]);
 
