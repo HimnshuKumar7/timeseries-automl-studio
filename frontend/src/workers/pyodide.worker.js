@@ -9,31 +9,48 @@ const pyodideAPI = {
 
         if (!initPromise) {
             initPromise = (async () => {
-                try {
-                    console.log("[Pyodide Worker] Starting Pyodide initialization...");
-                    if (progressCallback) await progressCallback("Loading Pyodide engine from CDN...");
+                const CDNS = [
+                    "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/",
+                    "https://fastly.jsdelivr.net/pyodide/v0.26.4/full/",
+                    "https://gcore.jsdelivr.net/pyodide/v0.26.4/full/",
+                    "https://unpkg.com/pyodide@0.26.4/"
+                ];
 
-                    const pyodideModule = await import("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.mjs");
+                let lastError = null;
+                for (let i = 0; i < CDNS.length; i++) {
+                    const cdn = CDNS[i];
+                    try {
+                        console.log(`[Pyodide Worker] Attempting initialization from ${cdn}...`);
+                        if (progressCallback) await progressCallback(`Loading Pyodide engine (source ${i + 1}/${CDNS.length})...`);
 
-                    if (progressCallback) await progressCallback("Initializing Pyodide WASM runtime...");
-                    console.log("[Pyodide Worker] Loading Pyodide WASM...");
-                    const instance = await pyodideModule.loadPyodide({
-                        indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/"
-                    });
+                        const pyodideModule = await import(/* @vite-ignore */ `${cdn}pyodide.mjs`);
 
-                    if (progressCallback) await progressCallback("Loading Python ML libraries (pandas, sklearn, statsmodels)...");
-                    console.log("[Pyodide Worker] Loading Python packages...");
-                    await instance.loadPackage(["pandas", "scikit-learn", "statsmodels", "numpy"]);
+                        if (progressCallback) await progressCallback("Initializing Pyodide WASM runtime...");
+                        console.log("[Pyodide Worker] Loading Pyodide WASM from " + cdn);
+                        const instance = await pyodideModule.loadPyodide({
+                            indexURL: cdn
+                        });
 
-                    pyodideInstance = instance;
-                    console.log("[Pyodide Worker] Pyodide initialized successfully.");
-                    if (progressCallback) await progressCallback("Pyodide ready.");
-                    return true;
-                } catch (err) {
-                    console.error("[Pyodide Worker] Initialization error:", err);
-                    initPromise = null;
-                    throw err;
+                        if (progressCallback) await progressCallback("Loading Python libraries (pandas)...");
+                        console.log("[Pyodide Worker] Loading Python packages...");
+                        await instance.loadPackage(['pandas']);
+
+                        pyodideInstance = instance;
+                        console.log("[Pyodide Worker] Pyodide initialized successfully from " + cdn);
+                        if (progressCallback) await progressCallback("Pyodide ready.");
+                        return true;
+                    } catch (err) {
+                        console.warn(`[Pyodide Worker] Failed to load Pyodide from ${cdn}:`, err);
+                        lastError = err;
+                    }
                 }
+
+                initPromise = null;
+                const errorDetail = lastError?.message || String(lastError);
+                throw new Error(
+                    `Failed to load Pyodide engine from CDNs (${errorDetail}). ` +
+                    `If you have an ad-blocker (e.g. Brave Shields, uBlock Origin) or firewall enabled, please whitelist or disable it and try again.`
+                );
             })();
         }
 
