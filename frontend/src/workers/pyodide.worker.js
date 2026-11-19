@@ -131,13 +131,21 @@ generate_preview()
         if (progressCallback) progressCallback("Fitting model...");
         await new Promise(resolve => setTimeout(resolve, 100));
 
+        const horizon = (typeof modelParams.forecastHorizon === 'number' && modelParams.forecastHorizon > 0)
+            ? Math.floor(modelParams.forecastHorizon)
+            : (parseInt(modelParams.forecastHorizon, 10) || 5);
+
         pyodideInstance.globals.set("csv_content", csvContent);
         pyodideInstance.globals.set("target_col", targetCol);
         pyodideInstance.globals.set("model_type", modelType);
+        pyodideInstance.globals.set("forecast_horizon", horizon);
         pyodideInstance.globals.set("split_fraction", modelParams.splitFraction || 0.2);
         pyodideInstance.globals.set("rf_estimators", modelParams.rfEstimators || 100);
         pyodideInstance.globals.set("rf_max_depth", modelParams.rfMaxDepth || 0);
         pyodideInstance.globals.set("rf_min_samples_split", modelParams.rfMinSamplesSplit || 2);
+        pyodideInstance.globals.set("arima_p", parseInt(modelParams.arima_p, 10) || 10);
+        pyodideInstance.globals.set("arima_d", parseInt(modelParams.arima_d, 10) || 1);
+        pyodideInstance.globals.set("arima_q", parseInt(modelParams.arima_q, 10) || 5);
 
         const code = `
 import pandas as pd
@@ -168,15 +176,15 @@ def run_training():
     metrics = {}
     forecast = []
     
-    forecast_steps = int(model_params.get('forecastHorizon', 5)) if 'model_params' in locals() and isinstance(model_params, dict) else 5
+    forecast_steps = int(forecast_horizon) if 'forecast_horizon' in globals() else 5
     
     if model_type == 'arima':
         from statsmodels.tsa.arima.model import ARIMA
         # Univariate ARIMA model order (p, d, q) = (10, 1, 5)
         # p=10 (autoregressive order), d=1 (differencing degree), q=5 (moving-average order)
-        p = int(model_params.get('arima_p', 10)) if 'model_params' in locals() and isinstance(model_params, dict) else 10
-        d = int(model_params.get('arima_d', 1)) if 'model_params' in locals() and isinstance(model_params, dict) else 1
-        q = int(model_params.get('arima_q', 5)) if 'model_params' in locals() and isinstance(model_params, dict) else 5
+        p = int(arima_p) if 'arima_p' in globals() else 10
+        d = int(arima_d) if 'arima_d' in globals() else 1
+        q = int(arima_q) if 'arima_q' in globals() else 5
         model = ARIMA(y, order=(p, d, q))
         fitted = model.fit(method_kwargs={'method': 'nm', 'maxiter': 50})
         preds = fitted.fittedvalues

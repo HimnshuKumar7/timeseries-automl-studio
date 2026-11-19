@@ -150,7 +150,9 @@ export default function StepTrain() {
             if (timeSeriesData.length === 0) throw new Error("Could not extract aligned numeric data for the target and selected deep-learning features.");
             
             const trainFn = tfjs[DEEP_MODEL_TRAINERS[model]];
-            const forecastSteps = modelParams.forecastHorizon || 5;
+            const forecastSteps = (typeof modelParams.forecastHorizon === 'number' && modelParams.forecastHorizon > 0)
+              ? Math.floor(modelParams.forecastHorizon)
+              : 5;
             const deepSplitFraction = modelParams.splitFraction ?? 0.2;
             const totalEpochs = modelParams.epochs || 4;
             const result = await trainFn(
